@@ -92,7 +92,7 @@ export const NOTIFICATION_MD = {
   ): string =>
     (
       `⚖️ *Claim \\#${claimId} resolved* — winner: *${winnerSide}*\n` +
-      `Confidence: ${confidence}%\n` +
+      `Confidence: ${confidence}\n` +
       (summary ? `_${summary}_` : "")
     ).trimEnd(),
 
@@ -200,7 +200,7 @@ export const NOTIFICATION_PLAIN = {
     confidence: string,
     summary: string | null,
   ): string =>
-    `Claim #${claimId} resolved — winner: ${winnerSide}\nConfidence: ${confidence}%` +
+    `Claim #${claimId} resolved — winner: ${winnerSide}\nConfidence: ${confidence}` +
     (summary ? `\n${summary}` : ""),
 
   claimCancelled: (claimId: string | number): string =>
