@@ -6,8 +6,10 @@
  * captures from being presented as global market totals.
  *
  * Invariants:
- * - Ledger bounds are integers; null when no events or explicit range exist.
- * - Gaps are sorted ascending by starting ledger with non-negative missed counts.
+ * - Supplied bounds and gap endpoints must be non-negative safe integers.
+ * - Absent metadata is distinguished from invalid supplied metadata (invalid input is rejected).
+ * - Gaps are sorted ascending and overlapping/adjacent gaps are normalized so missed
+ *   ledgers are not counted twice.
  * - An aggregate series is complete (`isComplete = true`) ONLY when explicitly asserted
  *   complete by the caller AND free of uncaptured gaps.
  * - Partial captures yield `globalMarketTotals: null` to prevent presenting incomplete
@@ -90,6 +92,13 @@ export interface CaptureCompletenessOptions {
 }
 
 /**
+ * Validate that a value is a non-negative safe integer.
+ */
+export function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+/**
  * Thrown when an aggregate series is required to be complete (e.g. `requireComplete: true`
  * or `assertCompleteCapture()`) but the capture is partial or contains gaps.
  */
@@ -126,7 +135,50 @@ export function assertCompleteCapture(result: { completeness: CaptureCompletenes
 }
 
 /**
+ * Normalize and merge overlapping or adjacent gaps so missed ledgers are not double counted.
+ */
+export function normalizeGaps(gaps: readonly CaptureGap[]): CaptureGap[] {
+  if (gaps.length <= 1) {
+    return gaps.map((g) => ({ ...g }));
+  }
+
+  // Sort ascending by fromLedger, then toLedger
+  const sorted = [...gaps].sort((a, b) => a.fromLedger - b.fromLedger || a.toLedger - b.toLedger);
+  const merged: CaptureGap[] = [];
+
+  for (const gap of sorted) {
+    if (merged.length === 0) {
+      merged.push({
+        fromLedger: gap.fromLedger,
+        toLedger: gap.toLedger,
+        missedLedgers: gap.toLedger - gap.fromLedger + 1,
+      });
+      continue;
+    }
+
+    const last = merged[merged.length - 1]!;
+    if (gap.fromLedger <= last.toLedger + 1) {
+      // Overlapping or adjacent interval: merge
+      last.toLedger = Math.max(last.toLedger, gap.toLedger);
+      last.missedLedgers = last.toLedger - last.fromLedger + 1;
+    } else {
+      merged.push({
+        fromLedger: gap.fromLedger,
+        toLedger: gap.toLedger,
+        missedLedgers: gap.toLedger - gap.fromLedger + 1,
+      });
+    }
+  }
+
+  return merged;
+}
+
+/**
  * Extract observed min/max ledgers and derive capture completeness metadata.
+ *
+ * Validates supplied bounds and gap endpoints as non-negative safe integers,
+ * distinguishing absent metadata from invalid supplied metadata.
+ * Normalizes overlapping gaps before totaling missed ledgers.
  */
 export function computeCaptureCompleteness(
   events: readonly unknown[] | null | undefined,
@@ -139,53 +191,110 @@ export function computeCaptureCompleteness(
     for (const event of events) {
       if (!event || typeof event !== "object") continue;
       const l = (event as { ledger?: unknown }).ledger;
-      if (typeof l === "number" && Number.isFinite(l) && l >= 0) {
-        const ledger = Math.trunc(l);
-        if (minObserved === null || ledger < minObserved) minObserved = ledger;
-        if (maxObserved === null || ledger > maxObserved) maxObserved = ledger;
+      if (typeof l === "number" && Number.isSafeInteger(l) && l >= 0) {
+        if (minObserved === null || l < minObserved) minObserved = l;
+        if (maxObserved === null || l > maxObserved) maxObserved = l;
       }
     }
   }
 
-  const optFrom = options?.fromLedger ?? options?.startLedger;
-  const optTo = options?.toLedger ?? options?.endLedger;
+  // Validate supplied bounds: distinguish absent metadata from invalid supplied metadata
+  let optFrom: number | undefined;
+  if (options?.fromLedger !== undefined) {
+    if (!isNonNegativeSafeInteger(options.fromLedger)) {
+      throw new Error(`Invalid ledger range: fromLedger must be a non-negative safe integer; got ${String(options.fromLedger)}`);
+    }
+    optFrom = options.fromLedger;
+  }
+  if (options?.startLedger !== undefined) {
+    if (!isNonNegativeSafeInteger(options.startLedger)) {
+      throw new Error(`Invalid ledger range: startLedger must be a non-negative safe integer; got ${String(options.startLedger)}`);
+    }
+    if (optFrom === undefined) {
+      optFrom = options.startLedger;
+    }
+  }
 
-  const startLedger =
-    typeof optFrom === "number" && Number.isFinite(optFrom)
-      ? Math.trunc(optFrom)
-      : minObserved;
+  let optTo: number | undefined;
+  if (options?.toLedger !== undefined) {
+    if (!isNonNegativeSafeInteger(options.toLedger)) {
+      throw new Error(`Invalid ledger range: toLedger must be a non-negative safe integer; got ${String(options.toLedger)}`);
+    }
+    optTo = options.toLedger;
+  }
+  if (options?.endLedger !== undefined) {
+    if (!isNonNegativeSafeInteger(options.endLedger)) {
+      throw new Error(`Invalid ledger range: endLedger must be a non-negative safe integer; got ${String(options.endLedger)}`);
+    }
+    if (optTo === undefined) {
+      optTo = options.endLedger;
+    }
+  }
 
-  const endLedger =
-    typeof optTo === "number" && Number.isFinite(optTo)
-      ? Math.trunc(optTo)
-      : maxObserved;
+  const startLedger = optFrom !== undefined ? optFrom : minObserved;
+  const endLedger = optTo !== undefined ? optTo : maxObserved;
 
   if (startLedger !== null && endLedger !== null && startLedger > endLedger) {
     throw new Error(`Invalid ledger range: startLedger (${startLedger}) cannot exceed endLedger (${endLedger})`);
   }
 
-  const rawGaps = options?.gaps ?? options?.knownGaps ?? [];
-  const gaps: CaptureGap[] = [];
-
-  for (const g of rawGaps) {
-    if (!g || typeof g !== "object") continue;
-    const f = g.fromLedger ?? g.from;
-    const t = g.toLedger ?? g.to;
-    if (typeof f === "number" && Number.isFinite(f) && typeof t === "number" && Number.isFinite(t)) {
-      const fromLedger = Math.trunc(f);
-      const toLedger = Math.trunc(t);
-      if (fromLedger > toLedger) {
-        throw new Error(`Invalid gap range: fromLedger (${fromLedger}) cannot exceed toLedger (${toLedger})`);
-      }
-      const missed =
-        typeof g.missedLedgers === "number" && Number.isFinite(g.missedLedgers) && g.missedLedgers > 0
-          ? Math.trunc(g.missedLedgers)
-          : Math.max(1, toLedger - fromLedger + 1);
-      gaps.push({ fromLedger, toLedger, missedLedgers: missed });
-    }
+  if (options?.isComplete !== undefined && typeof options.isComplete !== "boolean") {
+    throw new Error(`Invalid option: isComplete must be a boolean; got ${typeof options.isComplete}`);
+  }
+  if (options?.requireComplete !== undefined && typeof options.requireComplete !== "boolean") {
+    throw new Error(`Invalid option: requireComplete must be a boolean; got ${typeof options.requireComplete}`);
   }
 
-  gaps.sort((a, b) => a.fromLedger - b.fromLedger || a.toLedger - b.toLedger);
+  // Validate and collect raw gaps
+  const rawGaps: unknown[] = [];
+  if (options?.gaps !== undefined) {
+    if (!Array.isArray(options.gaps)) {
+      throw new Error(`Invalid gaps: expected an array; got ${typeof options.gaps}`);
+    }
+    rawGaps.push(...options.gaps);
+  }
+  if (options?.knownGaps !== undefined) {
+    if (!Array.isArray(options.knownGaps)) {
+      throw new Error(`Invalid knownGaps: expected an array; got ${typeof options.knownGaps}`);
+    }
+    rawGaps.push(...options.knownGaps);
+  }
+
+  const parsedGaps: CaptureGap[] = [];
+
+  for (let i = 0; i < rawGaps.length; i++) {
+    const g = rawGaps[i];
+    if (!g || typeof g !== "object") {
+      throw new Error(`Invalid gap entry at index ${i}: expected an object; got ${String(g)}`);
+    }
+    const rec = g as Record<string, unknown>;
+    const f = "fromLedger" in rec ? rec.fromLedger : ("from" in rec ? rec.from : undefined);
+    const t = "toLedger" in rec ? rec.toLedger : ("to" in rec ? rec.to : undefined);
+
+    if (f === undefined || !isNonNegativeSafeInteger(f)) {
+      throw new Error(`Invalid gap entry at index ${i}: fromLedger must be a non-negative safe integer; got ${String(f)}`);
+    }
+    if (t === undefined || !isNonNegativeSafeInteger(t)) {
+      throw new Error(`Invalid gap entry at index ${i}: toLedger must be a non-negative safe integer; got ${String(t)}`);
+    }
+    if (f > t) {
+      throw new Error(`Invalid gap range at index ${i}: fromLedger (${f}) cannot exceed toLedger (${t})`);
+    }
+
+    let missed = t - f + 1;
+    if ("missedLedgers" in rec && rec.missedLedgers !== undefined) {
+      const m = rec.missedLedgers;
+      if (!isNonNegativeSafeInteger(m) || m <= 0) {
+        throw new Error(`Invalid gap entry at index ${i}: missedLedgers must be a positive safe integer; got ${String(m)}`);
+      }
+      missed = m;
+    }
+
+    parsedGaps.push({ fromLedger: f, toLedger: t, missedLedgers: missed });
+  }
+
+  // Normalize and merge overlapping or adjacent gaps before totaling missed ledgers
+  const gaps = normalizeGaps(parsedGaps);
   const hasGaps = gaps.length > 0;
   const totalMissedLedgers = gaps.reduce((sum, g) => sum + g.missedLedgers, 0);
 
