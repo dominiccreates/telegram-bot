@@ -55,37 +55,38 @@ export interface VolumeSeriesOptions {
   includeCheckpoint?: boolean;
 }
 
+/**
+ * Summary of the volume series. Conflicting terminal events are not silently
+ * resolved; they are reported via `inconsistencies`.
+ */
+
 export interface VolumeBucket {
-  /** UTC ISO string representing the start of the bucket (e.g. "2026-10-20T16:00:00.000Z" or "2026-10-20T00:00:00.000Z"). */
+  /** UTC ISO string representing the start of the bucket. */
   timestamp: string;
   /** Unix timestamp in seconds for the start of the bucket. */
   startAt: number;
-  /** Cumulative challenge stakes within the bucket formatted as bigint string. */
+  /** Composite identity of the aggregate this bucket belongs to. */
+  identityKey: string;
   challengeStakeTotal: string;
-  /** Cumulative squad deposits within the bucket formatted as bigint string. */
   squadDepositTotal: string;
-  /** Cumulative challenge stakes as bigint. */
   challengeStake: bigint;
-  /** Cumulative squad deposits as bigint. */
   squadDeposit: bigint;
-  /** Number of challenge events contributing to this bucket. */
   challengeCount: number;
-  /** Number of squad deposit events contributing to this bucket. */
   depositCount: number;
-  /** Total events aggregated into this bucket. */
   eventCount: number;
+  /**
+   * True when no valid events fell into this bucket. Zero-filled buckets carry
+   * `empty: true` so consumers can distinguish an absent observation from a
+   * real zero total.
+   */
+  empty: boolean;
 }
 
 export interface VolumeSeriesResult {
-  /** Contiguous time buckets (zero-filled) between earliest and latest event, or empty if no valid events. */
   buckets: VolumeBucket[];
-  /** Total challenge stake across all buckets as bigint string. */
   totalChallengeStake: string;
-  /** Total squad deposit across all buckets as bigint string. */
   totalSquadDeposit: string;
-  /** Count of events skipped due to missing or invalid `at` timestamp. */
   skippedWithoutAt: number;
-  /** Total valid events processed. */
   processedEvents: number;
   /** Optional versioned bounded checkpoint state representing this series, resumable for future pages. */
   checkpoint?: VolumeSeriesCheckpoint;
@@ -327,6 +328,8 @@ export class VolumeSeriesReducer {
       skippedWithoutAt: this.skippedWithoutAt,
       resumedDuplicates: this.resumedDuplicates,
     };
+    attachSeriesMetadata(emptyResult, 0n, 0n);
+    return emptyResult;
   }
 
   /**
@@ -380,26 +383,16 @@ export class VolumeSeriesReducer {
 
     if (payloadName === "claim_challenged") {
       const stake = (payload as { stake?: unknown }).stake;
-      if (typeof stake === "bigint") {
-        challengeStakeDelta = stake;
-      } else if (typeof stake === "string" || typeof stake === "number") {
-        try {
-          challengeStakeDelta = BigInt(stake);
-        } catch {
-          challengeStakeDelta = 0n;
-        }
+      if (typeof stake === "bigint") challengeStakeDelta = stake;
+      else if (typeof stake === "string" || typeof stake === "number") {
+        try { challengeStakeDelta = BigInt(stake); } catch { challengeStakeDelta = 0n; }
       }
       isChallenge = true;
     } else if (payloadName === "deposited") {
-      const amount = (payload as { amount?: unknown }).amount;
-      if (typeof amount === "bigint") {
-        squadDepositDelta = amount;
-      } else if (typeof amount === "string" || typeof amount === "number") {
-        try {
-          squadDepositDelta = BigInt(amount);
-        } catch {
-          squadDepositDelta = 0n;
-        }
+      const amt = (payload as { amount?: unknown }).amount;
+      if (typeof amt === "bigint") squadDepositDelta = amt;
+      else if (typeof amt === "string" || typeof amt === "number") {
+        try { squadDepositDelta = BigInt(amt); } catch { squadDepositDelta = 0n; }
       }
       isDeposit = true;
     }
@@ -425,12 +418,9 @@ export class VolumeSeriesReducer {
     let existing = this.bucketMap.get(bucketStart);
     if (!existing) {
       existing = {
-        startAt: bucketStart,
-        challengeStake: 0n,
-        squadDeposit: 0n,
-        challengeCount: 0,
-        depositCount: 0,
-        eventCount: 0,
+        identityKey, startAt: bucketStart,
+        challengeStake: 0n, squadDeposit: 0n,
+        challengeCount: 0, depositCount: 0, eventCount: 0,
       };
       this.bucketMap.set(bucketStart, existing);
     }
@@ -507,6 +497,9 @@ export class VolumeSeriesReducer {
       dedupCapacity: this.dedupCapacity,
     };
   }
+  buckets.sort((a, b) =>
+    a.identityKey < b.identityKey ? -1 : a.identityKey > b.identityKey ? 1 : a.startAt - b.startAt,
+  );
 
   toResult(options?: { includeCheckpoint?: boolean }): VolumeSeriesResult {
     const stepSeconds = this.bucketUnit === "hour" ? SECONDS_PER_HOUR : SECONDS_PER_DAY;

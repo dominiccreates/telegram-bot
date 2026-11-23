@@ -20,16 +20,17 @@ export interface ClaimLatency {
   resolutionAt: number;
   duration: LatencyDuration;
 }
+export interface LatencySummary { p50: LatencyDuration; p90: LatencyDuration; max: LatencyDuration; }
+export interface LatencyGroup { claims: ClaimLatency[]; summary: LatencySummary | null; }
 
-export interface LatencySummary {
-  p50: LatencyDuration;
-  p90: LatencyDuration;
-  max: LatencyDuration;
-}
-
-export interface LatencyGroup {
-  claims: ClaimLatency[];
-  summary: LatencySummary | null;
+export interface ResolutionLatencyOptions {
+  /**
+   * Builds a per-event identity component from a `DecodedEvent`. Defaults to
+   * `${contractId}:${source}`, which keeps identical numeric claim IDs from
+   * different contracts separate. Include the network when events from more
+   * than one network can be mixed in the same call.
+   */
+  identity?: (event: DecodedEvent) => string;
 }
 
 export interface ClaimEventState {
@@ -88,41 +89,21 @@ export class ResolutionLatencyCheckpointError extends Error {
   }
 }
 
-/**
- * Calculates the p-th percentile (0 <= p <= 100) using nearest-rank integer indexing.
- * For a sorted non-empty array of length N, rank = Math.ceil((p / 100) * N) -> index = rank - 1.
- * For p=0, returns values[0].
- */
 function nearestRank(sortedValues: number[], p: number): number {
-  if (sortedValues.length === 0) {
-    return 0;
-  }
+  if (sortedValues.length === 0) return 0;
   const rank = Math.ceil((p / 100) * sortedValues.length);
   const index = Math.max(0, Math.min(sortedValues.length - 1, rank - 1));
   return sortedValues[index]!;
 }
 
 function computeSummary(claims: ClaimLatency[]): LatencySummary | null {
-  if (claims.length === 0) {
-    return null;
-  }
-
+  if (claims.length === 0) return null;
   const sortedSec = claims.map((c) => c.duration.seconds).sort((a, b) => a - b);
   const sortedLed = claims.map((c) => c.duration.ledgers).sort((a, b) => a - b);
-
   return {
-    p50: {
-      seconds: nearestRank(sortedSec, 50),
-      ledgers: nearestRank(sortedLed, 50),
-    },
-    p90: {
-      seconds: nearestRank(sortedSec, 90),
-      ledgers: nearestRank(sortedLed, 90),
-    },
-    max: {
-      seconds: sortedSec[sortedSec.length - 1]!,
-      ledgers: sortedLed[sortedLed.length - 1]!,
-    },
+    p50: { seconds: nearestRank(sortedSec, 50), ledgers: nearestRank(sortedLed, 50) },
+    p90: { seconds: nearestRank(sortedSec, 90), ledgers: nearestRank(sortedLed, 90) },
+    max: { seconds: sortedSec[sortedSec.length - 1]!, ledgers: sortedLed[sortedLed.length - 1]! },
   };
 }
 
