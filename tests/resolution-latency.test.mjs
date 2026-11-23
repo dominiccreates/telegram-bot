@@ -45,6 +45,7 @@ test("resolutionLatency: handles resolved claims with duration and summary stats
   const report = resolutionLatency(events);
 
   assert.equal(report.excludedCount, 0);
+  assert.deepEqual(report.conflicts, []);
   assert.equal(report.resolved.claims.length, 2);
   assert.equal(report.cancelled.claims.length, 0);
 
@@ -104,6 +105,7 @@ test("resolutionLatency: excludes incomplete claims missing either end and count
 
   // 3 claims are missing either creation or resolution/cancellation
   assert.equal(report.excludedCount, 3);
+  assert.deepEqual(report.conflicts, []);
   assert.equal(report.resolved.claims.length, 1);
   assert.equal(report.resolved.claims[0].claimId, 4);
   assert.equal(report.cancelled.claims.length, 0);
@@ -113,6 +115,7 @@ test("resolutionLatency: empty input returns empty groups and zero exclusions", 
   const report = resolutionLatency([]);
 
   assert.equal(report.excludedCount, 0);
+  assert.deepEqual(report.conflicts, []);
   assert.equal(report.resolved.claims.length, 0);
   assert.equal(report.resolved.summary, null);
   assert.equal(report.cancelled.claims.length, 0);

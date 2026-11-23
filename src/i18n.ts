@@ -101,6 +101,22 @@ export const RESUME_MESSAGES = {
   stopped: "*Polling cannot resume* — the process is stopping\\.",
 } as const;
 
+// ── Bot: callback recovery hints ────────────────────────────────────────────
+
+export interface CallbackMessages {
+  pauseExpiredAlert: string;
+  pauseExpiredMessage: string;
+  broadcastExpiredAlert: string;
+  broadcastExpiredMessage: string;
+}
+
+export const CALLBACK_MESSAGES: CallbackMessages = {
+  pauseExpiredAlert: "Confirmation expired. Run /pause again.",
+  pauseExpiredMessage: "⏱ *Pause confirmation expired\\.* Run /pause again\\.",
+  broadcastExpiredAlert: "Broadcast confirmation expired. Run /broadcast again.",
+  broadcastExpiredMessage: "⚠️ Broadcast confirmation expired. Run /broadcast again.",
+};
+
 // ── Bot: audit command ───────────────────────────────────────────────────────
 
 /**
@@ -122,6 +138,7 @@ export const COMMAND_NAMES = [
   "contracts",
   "health",
   "preview",
+  "categories",
   "pause",
   "resume",
 ] as const;
@@ -139,6 +156,7 @@ export const COMMAND_DESCRIPTIONS: Readonly<Record<CommandName, string>> = {
   contracts: "Contract ids and explorer links",
   health: "Health assessment and operational readiness",
   preview: "Preview channel notification formatting",
+  categories: "Observed claim categories and counts",
   pause: "Operator only: pause new scans",
   resume: "Operator only: resume polling now",
 } as const;
@@ -322,6 +340,7 @@ export interface Messages {
   helpIntro: string;
   pauseMessages: PauseMessages;
   resumeMessages: ResumeMessages;
+  callbackMessages: CallbackMessages;
   auditCliHint: string;
   commandDescriptions: Readonly<Record<CommandName, string>>;
   notificationMd: NotificationMarkdownTemplates;
@@ -606,6 +625,13 @@ const ES_RESUME_MESSAGES: ResumeMessages = {
   stopped: "*El sondeo no puede reanudarse* — el proceso se está deteniendo\\.",
 };
 
+const ES_CALLBACK_MESSAGES: CallbackMessages = {
+  pauseExpiredAlert: "Confirmación caducada. Ejecuta /pause de nuevo.",
+  pauseExpiredMessage: "⏱ *Confirmación de pausa caducada\\.* Ejecuta /pause de nuevo\\.",
+  broadcastExpiredAlert: "Confirmación de difusión caducada. Ejecuta /broadcast de nuevo.",
+  broadcastExpiredMessage: "⚠️ Confirmación de difusión caducada. Ejecuta /broadcast de nuevo.",
+};
+
 const ES_COMMAND_DESCRIPTIONS: Readonly<Record<CommandName, string>> = {
   start: "Qué hace este bot",
   help: "Mostrar ayuda",
@@ -615,6 +641,7 @@ const ES_COMMAND_DESCRIPTIONS: Readonly<Record<CommandName, string>> = {
   contracts: "Ids de contratos y enlaces al explorador",
   health: "Evaluación de salud y preparación operativa",
   preview: "Previsualizar el formato de las notificaciones del canal",
+  categories: "Categorías de reclamaciones observadas y conteos",
   pause: "Solo operadores: pausar nuevos escaneos",
   resume: "Solo operadores: reanudar el sondeo ahora",
 };
@@ -866,6 +893,7 @@ export const EN_MESSAGES: Messages = {
   helpIntro: HELP_INTRO,
   pauseMessages: PAUSE_MESSAGES,
   resumeMessages: RESUME_MESSAGES,
+  callbackMessages: CALLBACK_MESSAGES,
   auditCliHint: AUDIT_CLI_HINT,
   commandDescriptions: COMMAND_DESCRIPTIONS,
   notificationMd: NOTIFICATION_MD,
@@ -881,6 +909,7 @@ export const ES_MESSAGES: Messages = {
     "Vigilo los dos contratos Soroban de Mimir en Stellar y publico aquí cada nuevo evento en cadena: reclamaciones abiertas, apuestas de impugnación, resoluciones del oráculo, liquidaciones y pagos.",
   pauseMessages: ES_PAUSE_MESSAGES,
   resumeMessages: ES_RESUME_MESSAGES,
+  callbackMessages: ES_CALLBACK_MESSAGES,
   auditCliHint:
     "Consulta `npm run audit -- --help` para la herramienta de informe independiente.",
   commandDescriptions: ES_COMMAND_DESCRIPTIONS,
